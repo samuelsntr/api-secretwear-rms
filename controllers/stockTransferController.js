@@ -274,20 +274,29 @@ exports.updateStockTransferStatus = async (req, res) => {
       if (transfer.StockRequest) {
         await transfer.StockRequest.update({ status: 'fulfilled' }, { transaction: t });
       }
-      
+
+      // Validation: Check stock before deducting
       for (const item of transfer.items) {
-        // Deduct from central warehouse
         const centralStock = await StockGudangPusat.findOne({
           where: { barangId: item.barangId },
           transaction: t,
           lock: t.LOCK.UPDATE
         });
-        
-        if (centralStock) {
-          centralStock.stok = parseFloat(centralStock.stok) - parseFloat(item.qty);
-          await centralStock.save({ transaction: t });
+        if (!centralStock || parseFloat(centralStock.stok) < parseFloat(item.qty)) {
+          await t.rollback();
+          return res.status(400).json({ message: `Stok barang di gudang pusat tidak mencukupi untuk barangId ${item.barangId} (tersedia: ${centralStock ? centralStock.stok : 0}, diminta: ${item.qty})` });
         }
-        
+      }
+      // Deduct stock after validation
+      for (const item of transfer.items) {
+        const centralStock = await StockGudangPusat.findOne({
+          where: { barangId: item.barangId },
+          transaction: t,
+          lock: t.LOCK.UPDATE
+        });
+        centralStock.stok = parseFloat(centralStock.stok) - parseFloat(item.qty);
+        await centralStock.save({ transaction: t });
+
         // Add to store stock
         let storeStock = await StockGudangToko.findOne({
           where: { 
@@ -297,7 +306,6 @@ exports.updateStockTransferStatus = async (req, res) => {
           transaction: t,
           lock: t.LOCK.UPDATE
         });
-        
         if (storeStock) {
           storeStock.stok = parseFloat(storeStock.stok) + parseFloat(item.qty);
           await storeStock.save({ transaction: t });
