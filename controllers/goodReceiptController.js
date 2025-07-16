@@ -49,7 +49,7 @@ exports.getAll = async (req, res) => {
     const count = await GoodReceipt.count({ where: whereClause });
 
     // Step 2: Get data (with include, limit, offset)
-    const rows = await GoodReceipt.findAll({
+    const { count: totalCount, rows } = await GoodReceipt.findAndCountAll({
       where: whereClause,
       include: [
         {
@@ -69,6 +69,8 @@ exports.getAll = async (req, res) => {
       limit: parseInt(limit),
       offset: parseInt(offset),
       order: [['createdAt', 'DESC']],
+      distinct: true, // Important for accurate count with joins
+      subQuery: false
     });
 
     res.json({
