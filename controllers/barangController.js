@@ -64,6 +64,10 @@ exports.getBarangById = async (req, res) => {
 exports.createBarang = async (req, res) => {
   try {
     const data = req.body;
+    // Set harga_beli to 0 if empty string
+    if (data.harga_beli === '') {
+      data.harga_beli = 0;
+    }
     const barang = await Barang.create(data);
     
     // Log the creation
@@ -88,7 +92,12 @@ exports.updateBarang = async (req, res) => {
     if (!barang) return res.status(404).json({ message: 'Barang tidak ditemukan' });
 
     const oldData = barang.toJSON();
-    await barang.update(req.body);
+    const updateData = req.body;
+    // Set harga_beli to 0 if empty string
+    if (updateData.harga_beli === '') {
+      updateData.harga_beli = 0;
+    }
+    await barang.update(updateData);
     
     // Log the update
     LogService.logUpdate(
@@ -96,7 +105,7 @@ exports.updateBarang = async (req, res) => {
       'barang',
       barang.id,
       oldData,
-      req.body,
+      updateData,
       req.ip || req.connection.remoteAddress
     );
     
