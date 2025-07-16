@@ -1,4 +1,4 @@
-const { StockRequest, StockRequestItem, Barang, Kategori, Warna, Ukuran } = require('../models');
+const { StockRequest, StockRequestItem, Barang, Kategori, Warna, Ukuran, StockGudangPusat } = require('../models');
 const { Op } = require('sequelize');
 const { generateCode } = require('../utils/codeGenerator');
 const LogService = require('../services/logService');
@@ -130,6 +130,14 @@ exports.createStockRequest = async (req, res) => {
     if (!toStoreId) {
       return res.status(400).json({ message: 'Store tujuan wajib dipilih' });
     }
+    // Validation: Only allow barang that exist in StockGudangPusat
+    const barangIds = items.map(item => item.barangId);
+    const pusatStocks = await StockGudangPusat.findAll({ where: { barangId: barangIds } });
+    const pusatBarangIds = pusatStocks.map(s => s.barangId);
+    const notExist = barangIds.filter(id => !pusatBarangIds.includes(id));
+    if (notExist.length > 0) {
+      return res.status(400).json({ message: `Barang berikut tidak ada di stok gudang pusat: ${notExist.join(', ')}` });
+    }
     const kode = await generateCode('stock-request', t);
     
     const request = await StockRequest.create({ 
@@ -217,6 +225,14 @@ exports.updateStockRequest = async (req, res) => {
     }
     if (!toStoreId) {
       return res.status(400).json({ message: 'Store tujuan wajib dipilih' });
+    }
+    // Validation: Only allow barang that exist in StockGudangPusat
+    const barangIds = items.map(item => item.barangId);
+    const pusatStocks = await StockGudangPusat.findAll({ where: { barangId: barangIds } });
+    const pusatBarangIds = pusatStocks.map(s => s.barangId);
+    const notExist = barangIds.filter(id => !pusatBarangIds.includes(id));
+    if (notExist.length > 0) {
+      return res.status(400).json({ message: `Barang berikut tidak ada di stok gudang pusat: ${notExist.join(', ')}` });
     }
 
     const oldData = {

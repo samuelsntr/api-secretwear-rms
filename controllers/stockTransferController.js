@@ -145,6 +145,15 @@ exports.createStockTransfer = async (req, res) => {
       return res.status(400).json({ message: 'Items tidak boleh kosong' });
     }
 
+    // Validation: Only allow barang that exist in StockGudangPusat
+    const barangIds = items.map(item => item.barangId);
+    const pusatStocks = await StockGudangPusat.findAll({ where: { barangId: barangIds } });
+    const pusatBarangIds = pusatStocks.map(s => s.barangId);
+    const notExist = barangIds.filter(id => !pusatBarangIds.includes(id));
+    if (notExist.length > 0) {
+      return res.status(400).json({ message: `Barang berikut tidak ada di stok gudang pusat: ${notExist.join(', ')}` });
+    }
+
     // Get the stock request to get the storeId
     const stockRequest = await StockRequest.findByPk(stockRequestId, { transaction: t });
     if (!stockRequest) {
