@@ -65,7 +65,8 @@ exports.getAll = async (req, res) => {
       limit: parseInt(limit),
       offset: parseInt(offset),
       order: [['createdAt', 'DESC']],
-      distinct: true // Important for accurate count with joins
+      distinct: true, // Important for accurate count with joins
+      subQuery: false
     });
 
     res.json({
