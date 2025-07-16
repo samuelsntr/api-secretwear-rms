@@ -112,7 +112,7 @@ class CodeGeneratorService {
       SELECT COALESCE(
         MAX(
           CAST(
-            SUBSTRING(kode FROM LENGTH('${config.prefix}-${today}-') + 1) AS INTEGER
+            SUBSTRING(kode FROM LENGTH('${config.prefix}-${today}-') + 1) AS UNSIGNED
           )
         ), 0
       ) + 1 as next_number
