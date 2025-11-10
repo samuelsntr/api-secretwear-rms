@@ -7,7 +7,7 @@ const { isAuthenticated, hasPrivilege } = require('../middleware/auth');
 router.get("/", isAuthenticated, hasPrivilege(['admin', 'owner', 'staff_sales']), saleController.getAll);
 router.get("/:id", isAuthenticated, hasPrivilege(['admin', 'owner', 'staff_sales']), saleController.getById);
 router.post("/", isAuthenticated, hasPrivilege(['admin', 'owner', 'staff_sales']), saleController.create);
-router.put("/:id", isAuthenticated, hasPrivilege(['admin', 'owner', 'staff_sales']), saleController.update);
-router.delete("/:id", isAuthenticated, hasPrivilege(['admin', 'owner', 'staff_sales']), saleController.delete);
+router.put("/:id", isAuthenticated, hasPrivilege(['admin', 'owner']), saleController.update);
+router.delete("/:id", isAuthenticated, hasPrivilege(['admin', 'owner']), saleController.delete);
 
 module.exports = router;
