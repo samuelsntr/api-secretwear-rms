@@ -344,16 +344,27 @@ exports.getDashboardSummary = async (req, res) => {
 // Sales Report
 exports.getSalesReport = async (req, res) => {
   try {
-    const { period = 'month', storeId, categoryId } = req.query;
+    const { period = 'month', storeId, categoryId, startDate, endDate } = req.query;
     
     // Log report access
     LogService.logReportAccess(
       req.user?.id,
       'SALES',
-      { period, storeId, categoryId },
+      { period, storeId, categoryId, startDate, endDate },
       req.ip || req.connection.remoteAddress
     );
-    const { start, end } = getDateRange(period);
+    
+    // Use custom date range if provided, otherwise use period
+    let start, end;
+    if (startDate && endDate) {
+      start = new Date(startDate);
+      end = new Date(endDate);
+      end.setHours(23, 59, 59, 999); // End of day
+    } else {
+      const dateRange = getDateRange(period);
+      start = dateRange.start;
+      end = dateRange.end;
+    }
 
     let whereClause = {
       createdAt: {
@@ -448,18 +459,30 @@ exports.getSalesReport = async (req, res) => {
 // Inventory Report
 exports.getInventoryReport = async (req, res) => {
   try {
-    const { storeId } = req.query;
+    const { storeId, startDate, endDate } = req.query;
     
     // Log report access
     LogService.logReportAccess(
       req.user?.id,
       'INVENTORY',
-      { storeId },
+      { storeId, startDate, endDate },
       req.ip || req.connection.remoteAddress
     );
 
+    // Build where clause for date filtering
+    let dateWhereClause = {};
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999); // End of day
+      dateWhereClause.updatedAt = {
+        [Op.between]: [start, end]
+      };
+    }
+
     // Get all stock data
     const stockGudangPusat = await StockGudangPusat.findAll({
+      where: dateWhereClause,
       include: [
         { model: Barang, include: [{ model: Kategori }] }
       ]
@@ -467,7 +490,7 @@ exports.getInventoryReport = async (req, res) => {
 
     let stockGudangToko = [];
     if (!storeId || storeId !== 'central') {
-      let whereClause = {};
+      let whereClause = { ...dateWhereClause };
       if (storeId && storeId !== 'central') {
         whereClause.storeId = storeId;
       }
@@ -1411,8 +1434,19 @@ exports.getMovingStockReport = async (req, res) => {
 // Export functions for all reports
 exports.exportSalesReport = async (req, res) => {
   try {
-    const { period = 'month', storeId, categoryId } = req.query;
-    const { start, end } = getDateRange(period);
+    const { period = 'month', storeId, categoryId, startDate, endDate } = req.query;
+    
+    // Use custom date range if provided, otherwise use period
+    let start, end;
+    if (startDate && endDate) {
+      start = new Date(startDate);
+      end = new Date(endDate);
+      end.setHours(23, 59, 59, 999); // End of day
+    } else {
+      const dateRange = getDateRange(period);
+      start = dateRange.start;
+      end = dateRange.end;
+    }
 
     let whereClause = {
       createdAt: {
@@ -1550,10 +1584,22 @@ exports.exportPurchaseReport = async (req, res) => {
 
 exports.exportInventoryReport = async (req, res) => {
   try {
-    const { storeId } = req.query;
+    const { storeId, startDate, endDate } = req.query;
+
+    // Build where clause for date filtering
+    let dateWhereClause = {};
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999); // End of day
+      dateWhereClause.updatedAt = {
+        [Op.between]: [start, end]
+      };
+    }
 
     // Get all stock data
     const stockGudangPusat = await StockGudangPusat.findAll({
+      where: dateWhereClause,
       include: [
         { model: Barang, include: [{ model: Kategori }] }
       ]
@@ -1561,7 +1607,7 @@ exports.exportInventoryReport = async (req, res) => {
 
     let stockGudangToko = [];
     if (!storeId || storeId !== 'central') {
-      let whereClause = {};
+      let whereClause = { ...dateWhereClause };
       if (storeId && storeId !== 'central') {
         whereClause.storeId = storeId;
       }
