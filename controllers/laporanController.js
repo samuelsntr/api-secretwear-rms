@@ -1,7 +1,7 @@
 const { Op } = require('sequelize');
 const { 
   Sale, SaleItem, PurchaseOrder, PurchaseOrderItem, StockGudangPusat, 
-  StockGudangToko, Barang, Kategori, Store, Supplier, User, SaleReturn, PurchaseReturn, StockRequest, StockRequestItem, StockTransfer, StockTransferItem, Expense, PaymentMethod
+  StockGudangToko, Barang, Kategori, Store, Supplier, User, SaleReturn, PurchaseReturn, StockRequest, StockRequestItem, StockTransfer, StockTransferItem, Expense
 } = require('../models');
 const LogService = require('../services/logService');
 const { convertToCSV, formatCurrency, formatDate, formatPercentage } = require('../utils/csvExport');
@@ -373,11 +373,7 @@ exports.getSalesReport = async (req, res) => {
     };
 
     if (storeId) {
-      if (storeId === 'central') {
-        whereClause.storeId = null;
-      } else {
-        whereClause.storeId = storeId;
-      }
+      whereClause.storeId = storeId;
     }
 
     const salesData = await Sale.findAll({
@@ -1459,11 +1455,7 @@ exports.exportSalesReport = async (req, res) => {
     };
 
     if (storeId) {
-      if (storeId === 'central') {
-        whereClause.storeId = null;
-      } else {
-        whereClause.storeId = storeId;
-      }
+      whereClause.storeId = storeId;
     }
 
     const salesData = await Sale.findAll({
@@ -1481,8 +1473,7 @@ exports.exportSalesReport = async (req, res) => {
           ]
         },
         { model: Store, as: 'store' },
-        { model: User },
-        { model: PaymentMethod, as: 'paymentMethod' }
+        { model: User }
       ],
       order: [['tanggal', 'DESC']]
     });

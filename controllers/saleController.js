@@ -33,14 +33,10 @@ exports.getAll = async (req, res) => {
     if (startDate || endDate) {
       const dateFilter = {};
       if (startDate) {
-        const start = new Date(startDate);
-        start.setHours(0, 0, 0, 0); // Start of day
-        dateFilter[Op.gte] = start;
+        dateFilter[Op.gte] = startDate;
       }
       if (endDate) {
-        const end = new Date(endDate);
-        end.setHours(23, 59, 59, 999); // End of day
-        dateFilter[Op.lte] = end;
+        dateFilter[Op.lte] = endDate;
       }
       whereClause.tanggal = dateFilter;
     }
