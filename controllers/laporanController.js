@@ -1,7 +1,7 @@
 const { Op } = require('sequelize');
 const { 
   Sale, SaleItem, PurchaseOrder, PurchaseOrderItem, StockGudangPusat, 
-  StockGudangToko, Barang, Kategori, Store, Supplier, User, SaleReturn, PurchaseReturn, StockRequest, StockRequestItem, StockTransfer, StockTransferItem, Expense
+  StockGudangToko, Barang, Kategori, Store, Supplier, User, SaleReturn, PurchaseReturn, StockRequest, StockRequestItem, StockTransfer, StockTransferItem, Expense, PaymentMethod
 } = require('../models');
 const LogService = require('../services/logService');
 const { convertToCSV, formatCurrency, formatDate, formatPercentage } = require('../utils/csvExport');
@@ -51,7 +51,7 @@ exports.getDashboardSummary = async (req, res) => {
     // Sales Summary
     const salesData = await Sale.findAll({
       where: {
-        createdAt: {
+        tanggal: {
           [Op.between]: [start, end]
         }
       },
@@ -68,7 +68,7 @@ exports.getDashboardSummary = async (req, res) => {
         },
         { model: Store, as: 'store' }
       ],
-      order: [['createdAt', 'ASC']]
+      order: [['tanggal', 'ASC']]
     });
 
     const totalSales = salesData.length;
@@ -163,7 +163,7 @@ exports.getDashboardSummary = async (req, res) => {
       
       const monthSales = await Sale.findAll({
         where: {
-          createdAt: {
+          tanggal: {
             [Op.between]: [monthStart, monthEnd]
           }
         },
@@ -238,7 +238,7 @@ exports.getDashboardSummary = async (req, res) => {
     // Get previous period data for comparison
     const previousSalesData = await Sale.findAll({
       where: {
-        createdAt: {
+        tanggal: {
           [Op.between]: [prevStart, prevEnd]
         }
       },
@@ -367,13 +367,17 @@ exports.getSalesReport = async (req, res) => {
     }
 
     let whereClause = {
-      createdAt: {
+      tanggal: {
         [Op.between]: [start, end]
       }
     };
 
     if (storeId) {
-      whereClause.storeId = storeId;
+      if (storeId === 'central') {
+        whereClause.storeId = null;
+      } else {
+        whereClause.storeId = storeId;
+      }
     }
 
     const salesData = await Sale.findAll({
@@ -393,7 +397,7 @@ exports.getSalesReport = async (req, res) => {
         { model: Store, as: 'store' },
         { model: User }
       ],
-      order: [['createdAt', 'DESC']]
+      order: [['tanggal', 'DESC']]
     });
 
     // Calculate metrics
@@ -805,7 +809,7 @@ exports.getFinancialSummary = async (req, res) => {
     // Sales revenue
     const salesData = await Sale.findAll({
       where: {
-        createdAt: {
+        tanggal: {
           [Op.between]: [start, end]
         }
       }
@@ -952,7 +956,7 @@ exports.getProductPerformance = async (req, res) => {
     // Get sales data
     const salesData = await Sale.findAll({
       where: {
-        createdAt: {
+        tanggal: {
           [Op.between]: [start, end]
         }
       },
@@ -1449,13 +1453,17 @@ exports.exportSalesReport = async (req, res) => {
     }
 
     let whereClause = {
-      createdAt: {
+      tanggal: {
         [Op.between]: [start, end]
       }
     };
 
     if (storeId) {
-      whereClause.storeId = storeId;
+      if (storeId === 'central') {
+        whereClause.storeId = null;
+      } else {
+        whereClause.storeId = storeId;
+      }
     }
 
     const salesData = await Sale.findAll({
@@ -1473,15 +1481,16 @@ exports.exportSalesReport = async (req, res) => {
           ]
         },
         { model: Store, as: 'store' },
-        { model: User }
+        { model: User },
+        { model: PaymentMethod, as: 'paymentMethod' }
       ],
-      order: [['createdAt', 'DESC']]
+      order: [['tanggal', 'DESC']]
     });
 
     // Prepare data for CSV
     const csvData = salesData.map(sale => ({
       'Invoice Number': sale.kode,
-      'Date': formatDate(sale.createdAt),
+      'Date': formatDate(sale.tanggal),
       'Store': sale.store?.nama || 'Central Warehouse',
       'Customer': sale.customer_name || 'Walk-in Customer',
       'Salesperson': sale.User?.username || 'System',
@@ -1675,7 +1684,7 @@ exports.exportFinancialReport = async (req, res) => {
     // Get sales data
     const salesData = await Sale.findAll({
       where: {
-        createdAt: { [Op.between]: [start, end] }
+        tanggal: { [Op.between]: [start, end] }
       },
       include: [
         { model: SaleItem, as: 'items' },
@@ -1744,7 +1753,7 @@ exports.exportProductPerformance = async (req, res) => {
     const { start, end } = getDateRange(period);
 
     let whereClause = {
-      createdAt: {
+      tanggal: {
         [Op.between]: [start, end]
       }
     };
