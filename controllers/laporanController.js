@@ -1,7 +1,8 @@
 const { Op } = require('sequelize');
 const { 
   Sale, SaleItem, PurchaseOrder, PurchaseOrderItem, StockGudangPusat, 
-  StockGudangToko, Barang, Kategori, Store, Supplier, User, SaleReturn, PurchaseReturn, StockRequest, StockRequestItem, StockTransfer, StockTransferItem, Expense
+  StockGudangToko, Barang, Kategori, Store, Supplier, User, PaymentMethod,
+  SaleReturn, PurchaseReturn, StockRequest, StockRequestItem, StockTransfer, StockTransferItem, Expense
 } = require('../models');
 const LogService = require('../services/logService');
 const { convertToCSV, formatCurrency, formatDate, formatPercentage } = require('../utils/csvExport');
@@ -391,7 +392,8 @@ exports.getSalesReport = async (req, res) => {
           ]
         },
         { model: Store, as: 'store' },
-        { model: User }
+        { model: User },
+        { model: PaymentMethod, as: 'paymentMethod' }
       ],
       order: [['tanggal', 'DESC']]
     });
@@ -1473,7 +1475,8 @@ exports.exportSalesReport = async (req, res) => {
           ]
         },
         { model: Store, as: 'store' },
-        { model: User }
+        { model: User },
+        { model: PaymentMethod, as: 'paymentMethod' }
       ],
       order: [['tanggal', 'DESC']]
     });
@@ -1483,7 +1486,6 @@ exports.exportSalesReport = async (req, res) => {
       'Invoice Number': sale.kode,
       'Date': formatDate(sale.tanggal),
       'Store': sale.store?.nama || 'Central Warehouse',
-      'Customer': sale.customer_name || 'Walk-in Customer',
       'Salesperson': sale.User?.username || 'System',
       'Total Items': sale.items.reduce((sum, item) => sum + item.qty, 0),
       'Total': formatCurrency(sale.total || 0),
@@ -1496,7 +1498,6 @@ exports.exportSalesReport = async (req, res) => {
       { key: 'Invoice Number', label: 'Invoice Number' },
       { key: 'Date', label: 'Date' },
       { key: 'Store', label: 'Store' },
-      { key: 'Customer', label: 'Customer' },
       { key: 'Salesperson', label: 'Salesperson' },
       { key: 'Total Items', label: 'Total Items' },
       { key: 'Total', label: 'Total' },
