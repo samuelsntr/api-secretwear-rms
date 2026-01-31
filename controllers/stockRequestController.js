@@ -120,7 +120,7 @@ exports.getStockRequestById = async (req, res) => {
 
 // POST create stock request with items
 exports.createStockRequest = async (req, res) => {
-  const t = await require('../models').sequelize.transaction();
+  let t;
   try {
     const { fromWarehouse, toStoreId, items } = req.body;
     
@@ -138,6 +138,9 @@ exports.createStockRequest = async (req, res) => {
     if (notExist.length > 0) {
       return res.status(400).json({ message: `Barang berikut tidak ada di stok gudang pusat: ${notExist.join(', ')}` });
     }
+
+    t = await require('../models').sequelize.transaction();
+
     const kode = await generateCode('stock-request', t);
     
     const request = await StockRequest.create({ 
@@ -188,7 +191,9 @@ exports.createStockRequest = async (req, res) => {
     
     res.status(201).json(result);
   } catch (err) {
-    await t.rollback();
+    if (t) {
+      await t.rollback();
+    }
     // Log error
     LogService.logError(
       err,
@@ -203,7 +208,7 @@ exports.createStockRequest = async (req, res) => {
 
 // PUT update stock request with items
 exports.updateStockRequest = async (req, res) => {
-  const t = await require('../models').sequelize.transaction();
+  let t;
   try {
     const { fromWarehouse, toStoreId, items } = req.body;
     const id = req.params.id;
@@ -240,6 +245,8 @@ exports.updateStockRequest = async (req, res) => {
       toStoreId: request.toStoreId,
       status: request.status
     };
+
+    t = await require('../models').sequelize.transaction();
 
     // Update basic fields
     await request.update({ 
@@ -295,7 +302,9 @@ exports.updateStockRequest = async (req, res) => {
     
     res.json(result);
   } catch (err) {
-    await t.rollback();
+    if (t) {
+      await t.rollback();
+    }
     // Log error
     LogService.logError(
       err,
