@@ -2,7 +2,7 @@ const { Op } = require('sequelize');
 const { 
   Sale, SaleItem, PurchaseOrder, PurchaseOrderItem, StockGudangPusat, 
   StockGudangToko, Barang, Kategori, Store, Supplier, User, PaymentMethod,
-  SaleReturn, PurchaseReturn, StockRequest, StockRequestItem, StockTransfer, StockTransferItem, Expense
+  SaleReturn, PurchaseReturn, StockRequest, StockRequestItem, StockTransfer, StockTransferItem, Expense, SaleReturnItem
 } = require('../models');
 const LogService = require('../services/logService');
 const { convertToCSV, formatCurrency, formatDate, formatPercentage } = require('../utils/csvExport');
@@ -345,22 +345,22 @@ exports.getDashboardSummary = async (req, res) => {
 // Sales Report
 exports.getSalesReport = async (req, res) => {
   try {
-    const { period = 'month', storeId, categoryId, startDate, endDate } = req.query;
+    const { period = 'month', storeId, categoryId, search, sortBy = 'profit', sortDir = 'desc' } = req.query;
+    let { startDate, endDate } = req.query;
     
     // Log report access
     LogService.logReportAccess(
       req.user?.id,
       'SALES',
-      { period, storeId, categoryId, startDate, endDate },
+      { period, storeId, categoryId, startDate, endDate, search },
       req.ip || req.connection.remoteAddress
     );
     
-    // Use custom date range if provided, otherwise use period
     let start, end;
     if (startDate && endDate) {
       start = new Date(startDate);
       end = new Date(endDate);
-      end.setHours(23, 59, 59, 999); // End of day
+      end.setHours(23, 59, 59, 999);
     } else {
       const dateRange = getDateRange(period);
       start = dateRange.start;
@@ -372,7 +372,6 @@ exports.getSalesReport = async (req, res) => {
         [Op.between]: [start, end]
       }
     };
-
     if (storeId) {
       whereClause.storeId = storeId;
     }
@@ -386,70 +385,222 @@ exports.getSalesReport = async (req, res) => {
           include: [
             {
               model: Barang,
-              include: [{ model: Kategori }],
-              where: categoryId ? { kategoriId: categoryId } : {}
+              include: [{ model: Kategori }]
             }
           ]
-        },
-        { model: Store, as: 'store' },
-        { model: User },
-        { model: PaymentMethod, as: 'paymentMethod' }
-      ],
-      order: [['tanggal', 'DESC']]
+        }
+      ]
     });
 
-    // Calculate metrics
-    const totalSales = salesData.length;
-    const totalRevenue = salesData.reduce((sum, sale) => sum + parseFloat(sale.total || 0), 0);
-    const totalItems = salesData.reduce((sum, sale) => {
-      return sum + sale.items.reduce((itemSum, item) => itemSum + item.qty, 0);
-    }, 0);
-
-    // Top selling products
-    const productSales = {};
-    salesData.forEach(sale => {
-      sale.items.forEach(item => {
-        const productName = item.Barang?.nama || 'Unknown';
-        if (!productSales[productName]) {
-          productSales[productName] = { quantity: 0, revenue: 0 };
+    const returnsData = await SaleReturn.findAll({
+      where: whereClause,
+      include: [
+        {
+          model: SaleReturnItem,
+          as: 'items',
+          include: [
+            {
+              model: Barang,
+              include: [{ model: Kategori }]
+            }
+          ]
         }
-        productSales[productName].quantity += item.qty;
-        productSales[productName].revenue += parseFloat(item.subtotal || 0);
+      ]
+    });
+
+    const stockPusat = await StockGudangPusat.findAll();
+    const stockToko = await StockGudangToko.findAll();
+    const currentStockMap = {};
+    stockPusat.forEach(s => {
+      currentStockMap[s.barangId] = (currentStockMap[s.barangId] || 0) + s.stok;
+    });
+    stockToko.forEach(s => {
+      currentStockMap[s.barangId] = (currentStockMap[s.barangId] || 0) + s.stok;
+    });
+
+    const productMap = {};
+    let totalTransactionsSet = new Set();
+
+    salesData.forEach(sale => {
+      totalTransactionsSet.add(sale.id);
+      
+      sale.items.forEach(item => {
+        if (!productMap[item.barangId]) {
+          productMap[item.barangId] = {
+            id: item.barangId,
+            kode: item.Barang?.sku || 'N/A',
+            nama: item.Barang?.nama || 'Unknown',
+            kategori: item.Barang?.Kategori?.nama || 'Unknown',
+            kategoriId: item.Barang?.Kategori?.id,
+            hargaBeli: parseFloat(item.Barang?.harga_beli || 0),
+            qtyTerjual: 0,
+            grossSales: 0,
+            totalDiskon: 0,
+            totalReturQty: 0,
+            totalReturAmount: 0,
+            transaksiSet: new Set()
+          };
+        }
+        
+        const p = productMap[item.barangId];
+        p.transaksiSet.add(sale.id);
+        
+        const qty = item.qty;
+        const harga = parseFloat(item.harga || 0);
+        const subtotal = qty * harga;
+        
+        let itemDiscount = 0;
+        if (sale.discount_mode === 'item') {
+            itemDiscount = subtotal * (parseFloat(item.discount_percent || 0) / 100);
+        } else if (sale.discount_mode === 'bill') {
+            itemDiscount = subtotal * (parseFloat(sale.bill_discount_percent || 0) / 100);
+        }
+        
+        p.qtyTerjual += qty;
+        p.grossSales += subtotal;
+        p.totalDiskon += itemDiscount;
       });
     });
 
-    const topProducts = Object.entries(productSales)
-      .map(([name, data]) => ({ name, ...data }))
-      .sort((a, b) => b.quantity - a.quantity)
+    returnsData.forEach(ret => {
+      ret.items.forEach(item => {
+        if (!productMap[item.barangId]) {
+          productMap[item.barangId] = {
+            id: item.barangId,
+            kode: item.Barang?.sku || 'N/A',
+            nama: item.Barang?.nama || 'Unknown',
+            kategori: item.Barang?.Kategori?.nama || 'Unknown',
+            kategoriId: item.Barang?.Kategori?.id,
+            hargaBeli: parseFloat(item.Barang?.harga_beli || 0),
+            qtyTerjual: 0,
+            grossSales: 0,
+            totalDiskon: 0,
+            totalReturQty: 0,
+            totalReturAmount: 0,
+            transaksiSet: new Set()
+          };
+        }
+        
+        const p = productMap[item.barangId];
+        p.totalReturQty += item.qty;
+        p.totalReturAmount += parseFloat(item.subtotal || 0);
+      });
+    });
+
+    let aggregatedItems = Object.values(productMap).map(p => {
+      const netSales = p.grossSales - p.totalDiskon - p.totalReturAmount;
+      const netQty = p.qtyTerjual - p.totalReturQty;
+      const cogs = netQty * p.hargaBeli;
+      const profit = netSales - cogs;
+      const margin = netSales > 0 ? (profit / netSales) * 100 : 0;
+      const avgPrice = netQty > 0 ? (netSales / netQty) : 0;
+      
+      return {
+        ...p,
+        netQty,
+        netSales,
+        cogs,
+        profit,
+        margin,
+        avgPrice,
+        jumlahTransaksi: p.transaksiSet.size,
+        stokSaatIni: currentStockMap[p.id] || 0
+      };
+    });
+
+    // Filtering
+    if (categoryId) {
+      aggregatedItems = aggregatedItems.filter(item => item.kategoriId === parseInt(categoryId));
+    }
+    
+    if (search) {
+      const s = search.toLowerCase();
+      aggregatedItems = aggregatedItems.filter(item => 
+        item.nama.toLowerCase().includes(s) || 
+        item.kode.toLowerCase().includes(s)
+      );
+    }
+
+    // Sorting
+    aggregatedItems.sort((a, b) => {
+      let valA = a[sortBy] !== undefined ? a[sortBy] : 0;
+      let valB = b[sortBy] !== undefined ? b[sortBy] : 0;
+      if (typeof valA === 'string') valA = valA.toLowerCase();
+      if (typeof valB === 'string') valB = valB.toLowerCase();
+      
+      if (valA < valB) return sortDir === 'asc' ? -1 : 1;
+      if (valA > valB) return sortDir === 'asc' ? 1 : -1;
+      return 0;
+    });
+
+    // Summary calculation
+    const summary = {
+      totalGrossSales: aggregatedItems.reduce((sum, item) => sum + item.grossSales, 0),
+      totalDiskon: aggregatedItems.reduce((sum, item) => sum + item.totalDiskon, 0),
+      totalReturAmount: aggregatedItems.reduce((sum, item) => sum + item.totalReturAmount, 0),
+      totalNetSales: aggregatedItems.reduce((sum, item) => sum + item.netSales, 0),
+      totalCogs: aggregatedItems.reduce((sum, item) => sum + item.cogs, 0),
+      totalProfit: aggregatedItems.reduce((sum, item) => sum + item.profit, 0),
+      totalQuantitySold: aggregatedItems.reduce((sum, item) => sum + item.netQty, 0),
+      totalTransactions: 0,
+      averageTransactionValue: 0
+    };
+
+    const filteredTransaksiSet = new Set();
+    aggregatedItems.forEach(item => {
+      if(item.transaksiSet) {
+        item.transaksiSet.forEach(tId => filteredTransaksiSet.add(tId));
+      }
+      delete item.transaksiSet; // cleanup
+    });
+    summary.totalTransactions = filteredTransaksiSet.size;
+    summary.averageTransactionValue = summary.totalTransactions > 0 ? summary.totalNetSales / summary.totalTransactions : 0;
+
+    // Insights
+    const topProductsByQty = [...aggregatedItems].sort((a, b) => b.netQty - a.netQty).slice(0, 10);
+    const topProductsByProfit = [...aggregatedItems].sort((a, b) => b.profit - a.profit).slice(0, 10);
+    const slowMovingProducts = [...aggregatedItems]
+      .filter(item => item.stokSaatIni > 0)
+      .sort((a, b) => a.netQty - b.netQty)
       .slice(0, 10);
 
-    // Sales by category
-    const categorySales = {};
-    salesData.forEach(sale => {
-      sale.items.forEach(item => {
-        const categoryName = item.Barang?.Kategori?.nama || 'Unknown';
-        if (!categorySales[categoryName]) {
-          categorySales[categoryName] = { quantity: 0, revenue: 0 };
-        }
-        categorySales[categoryName].quantity += item.qty;
-        categorySales[categoryName].revenue += parseFloat(item.subtotal || 0);
-      });
+    const catMap = {};
+    aggregatedItems.forEach(item => {
+      if (!catMap[item.kategori]) catMap[item.kategori] = 0;
+      catMap[item.kategori] += item.netSales;
     });
+    const categoryDistribution = Object.keys(catMap).map(k => ({
+      name: k,
+      value: catMap[k]
+    })).sort((a, b) => b.value - a.value);
+
+    // Pagination
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const startIndex = (page - 1) * limit;
+    const endIndex = page * limit;
+    
+    const paginatedItems = aggregatedItems.slice(startIndex, endIndex);
 
     res.json({
       success: true,
       data: {
         period,
         dateRange: { start, end },
-        summary: {
-          totalSales,
-          totalRevenue,
-          totalItems,
-          averageOrderValue: totalSales > 0 ? totalRevenue / totalSales : 0
+        summary,
+        insights: {
+          topSelling: topProductsByQty,
+          mostProfitable: topProductsByProfit,
+          slowMoving: slowMovingProducts,
+          categoryDistribution
         },
-        topProducts,
-        categorySales: Object.entries(categorySales).map(([name, data]) => ({ name, ...data })),
-        sales: salesData
+        items: paginatedItems,
+        pagination: {
+          totalItems: aggregatedItems.length,
+          totalPages: Math.ceil(aggregatedItems.length / limit),
+          currentPage: page,
+          itemsPerPage: limit
+        }
       }
     });
   } catch (error) {
@@ -1436,14 +1587,14 @@ exports.getMovingStockReport = async (req, res) => {
 // Export functions for all reports
 exports.exportSalesReport = async (req, res) => {
   try {
-    const { period = 'month', storeId, categoryId, startDate, endDate } = req.query;
+    const { period = 'month', storeId, categoryId, search } = req.query;
+    let { startDate, endDate } = req.query;
     
-    // Use custom date range if provided, otherwise use period
     let start, end;
     if (startDate && endDate) {
       start = new Date(startDate);
       end = new Date(endDate);
-      end.setHours(23, 59, 59, 999); // End of day
+      end.setHours(23, 59, 59, 999);
     } else {
       const dateRange = getDateRange(period);
       start = dateRange.start;
@@ -1455,7 +1606,6 @@ exports.exportSalesReport = async (req, res) => {
         [Op.between]: [start, end]
       }
     };
-
     if (storeId) {
       whereClause.storeId = storeId;
     }
@@ -1466,50 +1616,155 @@ exports.exportSalesReport = async (req, res) => {
         {
           model: SaleItem,
           as: 'items',
-          include: [
-            {
-              model: Barang,
-              include: [{ model: Kategori }],
-              where: categoryId ? { kategoriId: categoryId } : {}
-            }
-          ]
-        },
-        { model: Store, as: 'store' },
-        { model: User },
-        { model: PaymentMethod, as: 'paymentMethod' }
-      ],
-      order: [['tanggal', 'DESC']]
+          include: [{ model: Barang, include: [{ model: Kategori }] }]
+        }
+      ]
     });
 
-    // Prepare data for CSV
-    const csvData = salesData.map(sale => ({
-      'Invoice Number': sale.kode,
-      'Date': formatDate(sale.tanggal),
-      'Store': sale.store?.nama || 'Central Warehouse',
-      'Salesperson': sale.User?.username || 'System',
-      'Total Items': sale.items.reduce((sum, item) => sum + item.qty, 0),
-      'Total': formatCurrency(sale.total || 0),
-      'Payment Method': sale.paymentMethod?.nama || 'Cash',
-      'Status': sale.status || 'Completed',
-      'Notes': sale.catatan || ''
+    const returnsData = await SaleReturn.findAll({
+      where: whereClause,
+      include: [
+        {
+          model: SaleReturnItem,
+          as: 'items',
+          include: [{ model: Barang, include: [{ model: Kategori }] }]
+        }
+      ]
+    });
+
+    const stockPusat = await StockGudangPusat.findAll();
+    const stockToko = await StockGudangToko.findAll();
+    const currentStockMap = {};
+    stockPusat.forEach(s => { currentStockMap[s.barangId] = (currentStockMap[s.barangId] || 0) + s.stok; });
+    stockToko.forEach(s => { currentStockMap[s.barangId] = (currentStockMap[s.barangId] || 0) + s.stok; });
+
+    const productMap = {};
+
+    salesData.forEach(sale => {
+      sale.items.forEach(item => {
+        if (!productMap[item.barangId]) {
+          productMap[item.barangId] = {
+            kode: item.Barang?.sku || 'N/A',
+            nama: item.Barang?.nama || 'Unknown',
+            kategori: item.Barang?.Kategori?.nama || 'Unknown',
+            kategoriId: item.Barang?.Kategori?.id,
+            hargaBeli: parseFloat(item.Barang?.harga_beli || 0),
+            qtyTerjual: 0,
+            grossSales: 0,
+            totalDiskon: 0,
+            totalReturQty: 0,
+            totalReturAmount: 0
+          };
+        }
+        
+        const p = productMap[item.barangId];
+        const qty = item.qty;
+        const harga = parseFloat(item.harga || 0);
+        const subtotal = qty * harga;
+        
+        let itemDiscount = 0;
+        if (sale.discount_mode === 'item') {
+            itemDiscount = subtotal * (parseFloat(item.discount_percent || 0) / 100);
+        } else if (sale.discount_mode === 'bill') {
+            itemDiscount = subtotal * (parseFloat(sale.bill_discount_percent || 0) / 100);
+        }
+        
+        p.qtyTerjual += qty;
+        p.grossSales += subtotal;
+        p.totalDiskon += itemDiscount;
+      });
+    });
+
+    returnsData.forEach(ret => {
+      ret.items.forEach(item => {
+        if (!productMap[item.barangId]) {
+          productMap[item.barangId] = {
+            kode: item.Barang?.sku || 'N/A',
+            nama: item.Barang?.nama || 'Unknown',
+            kategori: item.Barang?.Kategori?.nama || 'Unknown',
+            kategoriId: item.Barang?.Kategori?.id,
+            hargaBeli: parseFloat(item.Barang?.harga_beli || 0),
+            qtyTerjual: 0,
+            grossSales: 0,
+            totalDiskon: 0,
+            totalReturQty: 0,
+            totalReturAmount: 0
+          };
+        }
+        
+        const p = productMap[item.barangId];
+        p.totalReturQty += item.qty;
+        p.totalReturAmount += parseFloat(item.subtotal || 0);
+      });
+    });
+
+    let aggregatedItems = Object.values(productMap).map(p => {
+      const netSales = p.grossSales - p.totalDiskon - p.totalReturAmount;
+      const netQty = p.qtyTerjual - p.totalReturQty;
+      const cogs = netQty * p.hargaBeli;
+      const profit = netSales - cogs;
+      const margin = netSales > 0 ? (profit / netSales) * 100 : 0;
+      const avgPrice = netQty > 0 ? (netSales / netQty) : 0;
+      
+      return {
+        ...p,
+        netQty,
+        netSales,
+        cogs,
+        profit,
+        margin,
+        avgPrice
+      };
+    });
+
+    if (categoryId) {
+      aggregatedItems = aggregatedItems.filter(item => item.kategoriId === parseInt(categoryId));
+    }
+    
+    if (search) {
+      const s = search.toLowerCase();
+      aggregatedItems = aggregatedItems.filter(item => 
+        item.nama.toLowerCase().includes(s) || 
+        item.kode.toLowerCase().includes(s)
+      );
+    }
+    
+    aggregatedItems.sort((a, b) => b.profit - a.profit);
+
+    const csvData = aggregatedItems.map(item => ({
+      'Kode Barang': item.kode,
+      'Nama Barang': item.nama,
+      'Kategori': item.kategori,
+      'Qty Terjual': item.netQty,
+      'Penjualan Kotor': formatCurrency(item.grossSales),
+      'Diskon': formatCurrency(item.totalDiskon),
+      'Retur': formatCurrency(item.totalReturAmount),
+      'Penjualan Bersih': formatCurrency(item.netSales),
+      'HPP (COGS)': formatCurrency(item.cogs),
+      'Profit Kotor': formatCurrency(item.profit),
+      'Margin (%)': formatPercentage(item.margin),
+      'Harga Jual Rata-rata': formatCurrency(item.avgPrice)
     }));
 
     const headers = [
-      { key: 'Invoice Number', label: 'Invoice Number' },
-      { key: 'Date', label: 'Date' },
-      { key: 'Store', label: 'Store' },
-      { key: 'Salesperson', label: 'Salesperson' },
-      { key: 'Total Items', label: 'Total Items' },
-      { key: 'Total', label: 'Total' },
-      { key: 'Payment Method', label: 'Payment Method' },
-      { key: 'Status', label: 'Status' },
-      { key: 'Notes', label: 'Notes' }
+      { key: 'Kode Barang', label: 'Kode Barang' },
+      { key: 'Nama Barang', label: 'Nama Barang' },
+      { key: 'Kategori', label: 'Kategori' },
+      { key: 'Qty Terjual', label: 'Qty Terjual' },
+      { key: 'Penjualan Kotor', label: 'Penjualan Kotor' },
+      { key: 'Diskon', label: 'Diskon' },
+      { key: 'Retur', label: 'Retur' },
+      { key: 'Penjualan Bersih', label: 'Penjualan Bersih' },
+      { key: 'HPP (COGS)', label: 'HPP (COGS)' },
+      { key: 'Profit Kotor', label: 'Profit Kotor' },
+      { key: 'Margin (%)', label: 'Margin (%)' },
+      { key: 'Harga Jual Rata-rata', label: 'Harga Jual Rata-rata' }
     ];
 
     const csv = convertToCSV(csvData, headers);
     
     res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', `attachment; filename=sales-report-${period}-${new Date().toISOString().split('T')[0]}.csv`);
+    res.setHeader('Content-Disposition', `attachment; filename=item-sales-report-${period}-${new Date().toISOString().split('T')[0]}.csv`);
     res.send(csv);
   } catch (error) {
     console.error('Error exporting sales report:', error);
