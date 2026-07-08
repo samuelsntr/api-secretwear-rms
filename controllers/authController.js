@@ -21,12 +21,28 @@ exports.login = async (req, res) => {
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) return res.status(401).json({ message: 'Password salah' });
 
+    // Get and parse user permissions
+    let userPermissions = user.permissions;
+    if (typeof userPermissions === 'string') {
+      try { userPermissions = JSON.parse(userPermissions); } catch(e) {}
+    }
+    if (!userPermissions || !userPermissions.actions || !userPermissions.menus) {
+      userPermissions = getDefaultPermissions(user.role);
+    } else {
+      const defaults = getDefaultPermissions(user.role);
+      userPermissions = {
+        actions: { ...defaults.actions, ...userPermissions.actions },
+        menus: { ...defaults.menus, ...userPermissions.menus }
+      };
+    }
+
     // Jika pakai session
     req.session.user = {
       id: user.id,
       username: user.username,
       role: user.role,
       storeId: user.storeId,
+      permissions: userPermissions,
       store: user.Store ? {
         id: user.Store.id,
         nama: user.Store.nama
@@ -68,11 +84,27 @@ exports.me = async (req, res) => {
       return res.status(404).json({ message: 'User tidak ditemukan' });
     }
 
+    // Get and parse user permissions
+    let userPermissions = user.permissions;
+    if (typeof userPermissions === 'string') {
+      try { userPermissions = JSON.parse(userPermissions); } catch(e) {}
+    }
+    if (!userPermissions || !userPermissions.actions || !userPermissions.menus) {
+      userPermissions = getDefaultPermissions(user.role);
+    } else {
+      const defaults = getDefaultPermissions(user.role);
+      userPermissions = {
+        actions: { ...defaults.actions, ...userPermissions.actions },
+        menus: { ...defaults.menus, ...userPermissions.menus }
+      };
+    }
+
     const userData = {
       id: user.id,
       username: user.username,
       role: user.role,
       storeId: user.storeId,
+      permissions: userPermissions,
       store: user.Store ? {
         id: user.Store.id,
         nama: user.Store.nama
@@ -148,5 +180,50 @@ exports.logout = (req, res) => {
     res.clearCookie("connect.sid"); // nama cookie default dari express-session
     res.json({ message: "Logout berhasil" });
   });
+};
+
+const getDefaultPermissions = (role) => {
+  const isOwner = role === 'owner';
+  const isAdmin = role === 'admin' || isOwner;
+  const isGudang = role === 'staff_gudang';
+  const isSales = role === 'staff_sales';
+
+  return {
+    actions: {
+      add: isAdmin || isGudang || isSales,
+      update: isAdmin || isGudang,
+      reprint: isAdmin || isSales,
+      delete: isAdmin
+    },
+    menus: {
+      master_barang: isAdmin || isGudang,
+      master_supplier: isAdmin || isGudang,
+      master_gudang: isAdmin,
+      master_unit: isAdmin || isGudang,
+      master_kategori: isAdmin || isGudang,
+      master_brand: isAdmin || isGudang,
+      
+      pembelian: isAdmin || isGudang,
+      retur_pembelian: isAdmin || isGudang,
+      
+      distribusi_transfer: isAdmin || isGudang,
+      distribusi_penerimaan: isAdmin || isGudang || isSales,
+      
+      penjualan_pos: isAdmin || isSales,
+      penjualan_retur: isAdmin || isSales,
+      penjualan_closing: isAdmin || isSales,
+      
+      persediaan_stock: isAdmin || isGudang || isSales,
+      persediaan_mutasi: isAdmin || isGudang,
+      persediaan_opname: isAdmin || isGudang,
+      
+      laporan_penjualan: isAdmin || isOwner,
+      laporan_setoran: isAdmin || isOwner || isSales,
+      laporan_profit: isAdmin || isOwner,
+      
+      tools_users: isAdmin,
+      tools_hak_akses: isAdmin
+    }
+  };
 };
 

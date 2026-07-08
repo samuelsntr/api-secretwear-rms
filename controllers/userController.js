@@ -163,3 +163,129 @@ exports.deleteUser = async (req, res) => {
     res.status(500).json({ message: 'Gagal menghapus user', error: err.message });
   }
 };
+
+// Get default permission configuration
+const getDefaultPermissions = (role) => {
+  const isOwner = role === 'owner';
+  const isAdmin = role === 'admin' || isOwner;
+  const isGudang = role === 'staff_gudang';
+  const isSales = role === 'staff_sales';
+
+  return {
+    actions: {
+      add: isAdmin || isGudang || isSales,
+      update: isAdmin || isGudang,
+      reprint: isAdmin || isSales,
+      delete: isAdmin
+    },
+    menus: {
+      master_barang: isAdmin || isGudang,
+      master_supplier: isAdmin || isGudang,
+      master_gudang: isAdmin,
+      master_unit: isAdmin || isGudang,
+      master_kategori: isAdmin || isGudang,
+      master_brand: isAdmin || isGudang,
+      
+      pembelian: isAdmin || isGudang,
+      retur_pembelian: isAdmin || isGudang,
+      
+      distribusi_transfer: isAdmin || isGudang,
+      distribusi_penerimaan: isAdmin || isGudang || isSales,
+      
+      penjualan_pos: isAdmin || isSales,
+      penjualan_retur: isAdmin || isSales,
+      penjualan_closing: isAdmin || isSales,
+      
+      persediaan_stock: isAdmin || isGudang || isSales,
+      persediaan_mutasi: isAdmin || isGudang,
+      persediaan_opname: isAdmin || isGudang,
+      
+      laporan_penjualan: isAdmin || isOwner,
+      laporan_setoran: isAdmin || isOwner || isSales,
+      laporan_profit: isAdmin || isOwner,
+      
+      tools_users: isAdmin,
+      tools_hak_akses: isAdmin
+    }
+  };
+};
+
+exports.getDefaultPermissionsPreset = (req, res) => {
+  const { role } = req.query;
+  return res.json(getDefaultPermissions(role));
+};
+
+exports.getUserPermissions = async (req, res) => {
+  try {
+    const user = await User.findByPk(req.params.id);
+    if (!user) return res.status(404).json({ message: 'User tidak ditemukan' });
+
+    let permissions = user.permissions;
+    if (typeof permissions === 'string') {
+      try { permissions = JSON.parse(permissions); } catch(e) {}
+    }
+    
+    if (!permissions || !permissions.actions || !permissions.menus) {
+      permissions = getDefaultPermissions(user.role);
+    } else {
+      const defaults = getDefaultPermissions(user.role);
+      permissions = {
+        actions: { ...defaults.actions, ...permissions.actions },
+        menus: { ...defaults.menus, ...permissions.menus }
+      };
+    }
+
+    res.json({
+      userId: user.id,
+      username: user.username,
+      role: user.role,
+      permissions
+    });
+  } catch (err) {
+    LogService.logError(
+      err,
+      req.user?.id,
+      'USER',
+      'GET_PERMISSIONS',
+      req.ip || req.connection.remoteAddress
+    );
+    res.status(500).json({ message: 'Gagal mengambil hak akses', error: err.message });
+  }
+};
+
+exports.updateUserPermissions = async (req, res) => {
+  try {
+    const user = await User.findByPk(req.params.id);
+    if (!user) return res.status(404).json({ message: 'User tidak ditemukan' });
+
+    const { actions, menus } = req.body;
+    const oldPermissions = user.permissions;
+
+    user.permissions = {
+      actions: actions || {},
+      menus: menus || {}
+    };
+
+    await user.save();
+
+    LogService.logUpdate(
+      req.user?.id,
+      'user_permissions',
+      user.id,
+      { permissions: oldPermissions },
+      { permissions: user.permissions },
+      req.ip || req.connection.remoteAddress
+    );
+
+    res.json({ message: 'Hak akses berhasil disimpan' });
+  } catch (err) {
+    LogService.logError(
+      err,
+      req.user?.id,
+      'USER',
+      'UPDATE_PERMISSIONS',
+      req.ip || req.connection.remoteAddress
+    );
+    res.status(500).json({ message: 'Gagal menyimpan hak akses', error: err.message });
+  }
+};

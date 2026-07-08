@@ -99,8 +99,22 @@ app.get("/", (req, res) => res.send("Gudang management API running"));
 app.use(logError);
 
 // // Connect to DB and sync
-db.sequelize.sync({ alter: false }).then(() => {
+db.sequelize.sync({ alter: false }).then(async () => {
   console.log("Database connected and tables synced!");
+  try {
+    const queryInterface = db.sequelize.getQueryInterface();
+    const tableInfo = await queryInterface.describeTable('users');
+    if (!tableInfo.permissions) {
+      console.log("Adding 'permissions' column to 'users' table...");
+      await queryInterface.addColumn('users', 'permissions', {
+        type: db.Sequelize.JSON,
+        allowNull: true
+      });
+      console.log("Added 'permissions' column successfully.");
+    }
+  } catch (err) {
+    console.error("Error migrating 'permissions' column:", err.message);
+  }
 });
 
 const PORT = process.env.PORT || 5000;

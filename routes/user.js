@@ -9,4 +9,8 @@ router.post('/', isAuthenticated, hasPrivilege(['admin', 'owner']), userControll
 router.put('/:id', isAuthenticated, hasPrivilege(['admin', 'owner']), userController.updateUser);
 router.delete('/:id', isAuthenticated, hasPrivilege(['admin', 'owner']), userController.deleteUser);
 
+router.get('/preset', isAuthenticated, hasPrivilege(['admin', 'owner']), userController.getDefaultPermissionsPreset);
+router.get('/:id/permissions', isAuthenticated, hasPrivilege(['admin', 'owner']), userController.getUserPermissions);
+router.put('/:id/permissions', isAuthenticated, hasPrivilege(['admin', 'owner']), userController.updateUserPermissions);
+
 module.exports = router;

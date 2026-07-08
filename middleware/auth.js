@@ -1,35 +1,49 @@
 exports.isAuthenticated = (req, res, next) => {
-    if (req.session.user) return next();
-    return res.status(401).json({ message: 'Belum login' });
-  };
+  if (req.session.user) return next();
+  return res.status(401).json({ message: 'Belum login' });
+};
   
 exports.isAdmin = (req, res, next) => {
-  if (req.session.user?.role === 'admin') return next();
+  const role = String(req.session.user?.role || '').toLowerCase().trim();
+  if (role === 'admin') return next();
   return res.status(403).json({ message: 'Hanya admin yang diizinkan' });
-  };
+};
   
-// Middleware to check if user is owner or admin
 exports.isOwnerOrAdmin = (req, res, next) => {
-  const role = req.session.user?.role;
+  const role = String(req.session.user?.role || '').toLowerCase().trim();
   if (role === 'admin' || role === 'owner') return next();
   return res.status(403).json({ message: 'Hanya owner atau admin yang diizinkan' });
 };
 
-// Middleware to check if user is staff gudang
 exports.isStaffGudang = (req, res, next) => {
-  if (req.session.user?.role === 'staff_gudang') return next();
+  const role = String(req.session.user?.role || '').toLowerCase().trim();
+  if (role === 'staff_gudang' || role === 'admin' || role === 'owner') return next();
   return res.status(403).json({ message: 'Hanya staff gudang yang diizinkan' });
 };
 
-// Middleware to check if user is staff sales
 exports.isStaffSales = (req, res, next) => {
-  if (req.session.user?.role === 'staff_sales') return next();
+  const role = String(req.session.user?.role || '').toLowerCase().trim();
+  if (role === 'staff_sales' || role === 'admin' || role === 'owner') return next();
   return res.status(403).json({ message: 'Hanya staff sales yang diizinkan' });
 };
 
-// Generic middleware to check if user has one of the allowed roles
 exports.hasPrivilege = (roles) => (req, res, next) => {
-  if (roles.includes(req.session.user?.role)) return next();
+  const user = req.session.user;
+  if (!user) return res.status(401).json({ message: 'Belum login' });
+
+  const userRole = String(user.role || '').toLowerCase().trim();
+  if (userRole === 'admin' || userRole === 'owner') return next();
+
+  const allowedRoles = Array.isArray(roles)
+    ? roles.map(r => String(r).toLowerCase().trim())
+    : [String(roles).toLowerCase().trim()];
+  if (allowedRoles.includes(userRole)) return next();
+
+  // Check custom user permissions if configured
+  const perms = user.permissions || {};
+  const menus = perms.menus || {};
+  if (Object.values(menus).some(val => val === true)) return next();
+
   return res.status(403).json({ message: 'Akses ditolak' });
 };
   

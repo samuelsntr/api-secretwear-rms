@@ -23,6 +23,10 @@ module.exports = (sequelize, DataTypes) => {
         key: 'id',
       },
     },
+    permissions: {
+      type: DataTypes.JSON,
+      allowNull: true,
+    },
   },
   {
     tableName: "users",
