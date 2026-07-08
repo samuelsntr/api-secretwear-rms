@@ -1,6 +1,6 @@
 const { Op } = require('sequelize');
-const { 
-  Sale, SaleItem, PurchaseOrder, PurchaseOrderItem, StockGudangPusat, 
+const {
+  Sale, SaleItem, PurchaseOrder, PurchaseOrderItem, StockGudangPusat,
   StockGudangToko, Barang, Kategori, Store, Supplier, User, PaymentMethod,
   SaleReturn, PurchaseReturn, StockRequest, StockRequestItem, StockTransfer, StockTransferItem, Expense, SaleReturnItem
 } = require('../models');
@@ -11,7 +11,7 @@ const { convertToCSV, formatCurrency, formatDate, formatPercentage } = require('
 const getDateRange = (period) => {
   const now = new Date();
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  
+
   switch (period) {
     case 'today':
       return {
@@ -61,7 +61,7 @@ exports.getDashboardSummary = async (req, res) => {
           model: SaleItem,
           as: 'items',
           include: [
-            { 
+            {
               model: Barang,
               include: [{ model: Kategori }]
             }
@@ -120,7 +120,7 @@ exports.getDashboardSummary = async (req, res) => {
 
     // Count low stock items from both central warehouse and stores
     const lowStockItems = stockGudangPusat.filter(stock => stock.stok <= (stock.minimum_stock || 10)).length +
-                         stockGudangToko.filter(stock => stock.stok <= 10).length;
+      stockGudangToko.filter(stock => stock.stok <= 10).length;
 
     // Count total products (unique products across all locations)
     const allProducts = new Set();
@@ -151,17 +151,17 @@ exports.getDashboardSummary = async (req, res) => {
     // Generate sales trend data (monthly for the last 6 months)
     const salesTrendData = [];
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    
+
     for (let i = 5; i >= 0; i--) {
       const date = new Date();
       date.setMonth(date.getMonth() - i);
       const monthName = months[date.getMonth()];
       const year = date.getFullYear();
-      
+
       // Get sales for this month
       const monthStart = new Date(year, date.getMonth(), 1);
       const monthEnd = new Date(year, date.getMonth() + 1, 0, 23, 59, 59);
-      
+
       const monthSales = await Sale.findAll({
         where: {
           tanggal: {
@@ -175,12 +175,12 @@ exports.getDashboardSummary = async (req, res) => {
           }
         ]
       });
-      
+
       const monthRevenue = monthSales.reduce((sum, sale) => sum + parseFloat(sale.total || 0), 0);
       const monthItems = monthSales.reduce((sum, sale) => {
         return sum + sale.items.reduce((itemSum, item) => itemSum + item.qty, 0);
       }, 0);
-      
+
       salesTrendData.push({
         name: monthName,
         sales: monthItems,
@@ -289,16 +289,16 @@ exports.getDashboardSummary = async (req, res) => {
     const previousReturns = previousSalesReturns.length + previousPurchaseReturns.length;
 
     // Calculate growth percentages
-    const revenueGrowth = previousRevenue > 0 
-      ? ((totalRevenue - previousRevenue) / previousRevenue) * 100 
+    const revenueGrowth = previousRevenue > 0
+      ? ((totalRevenue - previousRevenue) / previousRevenue) * 100
       : totalRevenue > 0 ? 100 : 0;
-    
-    const purchaseGrowth = previousPurchaseAmount > 0 
-      ? ((totalPurchaseAmount - previousPurchaseAmount) / previousPurchaseAmount) * 100 
+
+    const purchaseGrowth = previousPurchaseAmount > 0
+      ? ((totalPurchaseAmount - previousPurchaseAmount) / previousPurchaseAmount) * 100
       : totalPurchaseAmount > 0 ? 100 : 0;
-    
-    const returnsGrowth = previousReturns > 0 
-      ? (((totalSalesReturns + totalPurchaseReturns) - previousReturns) / previousReturns) * 100 
+
+    const returnsGrowth = previousReturns > 0
+      ? (((totalSalesReturns + totalPurchaseReturns) - previousReturns) / previousReturns) * 100
       : (totalSalesReturns + totalPurchaseReturns) > 0 ? 100 : 0;
 
     res.json({
@@ -347,7 +347,7 @@ exports.getSalesReport = async (req, res) => {
   try {
     const { period = 'month', storeId, categoryId, search, sortBy = 'profit', sortDir = 'desc' } = req.query;
     let { startDate, endDate } = req.query;
-    
+
     // Log report access
     LogService.logReportAccess(
       req.user?.id,
@@ -355,7 +355,7 @@ exports.getSalesReport = async (req, res) => {
       { period, storeId, categoryId, startDate, endDate, search },
       req.ip || req.connection.remoteAddress
     );
-    
+
     let start, end;
     if (startDate && endDate) {
       start = new Date(startDate);
@@ -376,6 +376,13 @@ exports.getSalesReport = async (req, res) => {
       whereClause.storeId = storeId;
     }
 
+    const allStoresList = await Store.findAll();
+    const storeMap = {};
+    allStoresList.forEach(s => {
+      storeMap[s.id] = s.nama;
+    });
+    const getStoreName = (sId) => sId ? (storeMap[sId] || `Outlet #${sId}`) : 'Central Warehouse';
+
     const salesData = await Sale.findAll({
       where: whereClause,
       include: [
@@ -388,7 +395,8 @@ exports.getSalesReport = async (req, res) => {
               include: [{ model: Kategori }]
             }
           ]
-        }
+        },
+        { model: Store, as: 'store' }
       ]
     });
 
@@ -419,11 +427,29 @@ exports.getSalesReport = async (req, res) => {
     });
 
     const productMap = {};
+    const outletMap = {};
     let totalTransactionsSet = new Set();
 
     salesData.forEach(sale => {
       totalTransactionsSet.add(sale.id);
-      
+      const storeKey = sale.storeId || 'central';
+      const storeName = getStoreName(sale.storeId);
+
+      if (!outletMap[storeKey]) {
+        outletMap[storeKey] = {
+          id: storeKey,
+          name: storeName,
+          transactionsSet: new Set(),
+          qtySold: 0,
+          grossSales: 0,
+          totalDiskon: 0,
+          totalReturAmount: 0,
+          cogs: 0
+        };
+      }
+      const outlet = outletMap[storeKey];
+      outlet.transactionsSet.add(sale.id);
+
       sale.items.forEach(item => {
         if (!productMap[item.barangId]) {
           productMap[item.barangId] = {
@@ -438,31 +464,59 @@ exports.getSalesReport = async (req, res) => {
             totalDiskon: 0,
             totalReturQty: 0,
             totalReturAmount: 0,
-            transaksiSet: new Set()
+            transaksiSet: new Set(),
+            outletSalesMap: {}
           };
         }
-        
+
         const p = productMap[item.barangId];
         p.transaksiSet.add(sale.id);
-        
+
         const qty = item.qty;
         const harga = parseFloat(item.harga || 0);
         const subtotal = qty * harga;
-        
+
         let itemDiscount = 0;
         if (sale.discount_mode === 'item') {
-            itemDiscount = subtotal * (parseFloat(item.discount_percent || 0) / 100);
+          itemDiscount = subtotal * (parseFloat(item.discount_percent || 0) / 100);
         } else if (sale.discount_mode === 'bill') {
-            itemDiscount = subtotal * (parseFloat(sale.bill_discount_percent || 0) / 100);
+          itemDiscount = subtotal * (parseFloat(sale.bill_discount_percent || 0) / 100);
         }
-        
+
         p.qtyTerjual += qty;
         p.grossSales += subtotal;
         p.totalDiskon += itemDiscount;
+
+        if (!p.outletSalesMap[storeName]) {
+          p.outletSalesMap[storeName] = { storeName, qty: 0, netSales: 0 };
+        }
+        p.outletSalesMap[storeName].qty += qty;
+        p.outletSalesMap[storeName].netSales += (subtotal - itemDiscount);
+
+        outlet.qtySold += qty;
+        outlet.grossSales += subtotal;
+        outlet.totalDiskon += itemDiscount;
+        outlet.cogs += qty * parseFloat(item.Barang?.harga_beli || 0);
       });
     });
 
     returnsData.forEach(ret => {
+      const storeKey = ret.storeId || 'central';
+      const storeName = getStoreName(ret.storeId);
+      if (!outletMap[storeKey]) {
+        outletMap[storeKey] = {
+          id: storeKey,
+          name: storeName,
+          transactionsSet: new Set(),
+          qtySold: 0,
+          grossSales: 0,
+          totalDiskon: 0,
+          totalReturAmount: 0,
+          cogs: 0
+        };
+      }
+      const outlet = outletMap[storeKey];
+
       ret.items.forEach(item => {
         if (!productMap[item.barangId]) {
           productMap[item.barangId] = {
@@ -477,13 +531,15 @@ exports.getSalesReport = async (req, res) => {
             totalDiskon: 0,
             totalReturQty: 0,
             totalReturAmount: 0,
-            transaksiSet: new Set()
+            transaksiSet: new Set(),
+            outletSalesMap: {}
           };
         }
-        
+
         const p = productMap[item.barangId];
         p.totalReturQty += item.qty;
         p.totalReturAmount += parseFloat(item.subtotal || 0);
+        outlet.totalReturAmount += parseFloat(item.subtotal || 0);
       });
     });
 
@@ -494,7 +550,9 @@ exports.getSalesReport = async (req, res) => {
       const profit = netSales - cogs;
       const margin = netSales > 0 ? (profit / netSales) * 100 : 0;
       const avgPrice = netQty > 0 ? (netSales / netQty) : 0;
-      
+      const outlets = Object.values(p.outletSalesMap || {}).sort((a, b) => b.qty - a.qty);
+      delete p.outletSalesMap;
+
       return {
         ...p,
         netQty,
@@ -504,7 +562,8 @@ exports.getSalesReport = async (req, res) => {
         margin,
         avgPrice,
         jumlahTransaksi: p.transaksiSet.size,
-        stokSaatIni: currentStockMap[p.id] || 0
+        stokSaatIni: currentStockMap[p.id] || 0,
+        outlets
       };
     });
 
@@ -512,11 +571,11 @@ exports.getSalesReport = async (req, res) => {
     if (categoryId) {
       aggregatedItems = aggregatedItems.filter(item => item.kategoriId === parseInt(categoryId));
     }
-    
+
     if (search) {
       const s = search.toLowerCase();
-      aggregatedItems = aggregatedItems.filter(item => 
-        item.nama.toLowerCase().includes(s) || 
+      aggregatedItems = aggregatedItems.filter(item =>
+        item.nama.toLowerCase().includes(s) ||
         item.kode.toLowerCase().includes(s)
       );
     }
@@ -527,7 +586,7 @@ exports.getSalesReport = async (req, res) => {
       let valB = b[sortBy] !== undefined ? b[sortBy] : 0;
       if (typeof valA === 'string') valA = valA.toLowerCase();
       if (typeof valB === 'string') valB = valB.toLowerCase();
-      
+
       if (valA < valB) return sortDir === 'asc' ? -1 : 1;
       if (valA > valB) return sortDir === 'asc' ? 1 : -1;
       return 0;
@@ -548,13 +607,32 @@ exports.getSalesReport = async (req, res) => {
 
     const filteredTransaksiSet = new Set();
     aggregatedItems.forEach(item => {
-      if(item.transaksiSet) {
+      if (item.transaksiSet) {
         item.transaksiSet.forEach(tId => filteredTransaksiSet.add(tId));
       }
       delete item.transaksiSet; // cleanup
     });
     summary.totalTransactions = filteredTransaksiSet.size;
     summary.averageTransactionValue = summary.totalTransactions > 0 ? summary.totalNetSales / summary.totalTransactions : 0;
+
+    const outletPerformance = Object.values(outletMap).map(outlet => {
+      const netSales = outlet.grossSales - outlet.totalDiskon - outlet.totalReturAmount;
+      const profit = netSales - outlet.cogs;
+      const margin = netSales > 0 ? (profit / netSales) * 100 : 0;
+      return {
+        id: outlet.id,
+        name: outlet.name,
+        transactions: outlet.transactionsSet.size,
+        qtySold: outlet.qtySold,
+        grossSales: outlet.grossSales,
+        totalDiskon: outlet.totalDiskon,
+        totalReturAmount: outlet.totalReturAmount,
+        netSales,
+        cogs: outlet.cogs,
+        profit,
+        margin
+      };
+    }).sort((a, b) => b.netSales - a.netSales);
 
     // Insights
     const topProductsByQty = [...aggregatedItems].sort((a, b) => b.netQty - a.netQty).slice(0, 10);
@@ -579,7 +657,7 @@ exports.getSalesReport = async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const startIndex = (page - 1) * limit;
     const endIndex = page * limit;
-    
+
     const paginatedItems = aggregatedItems.slice(startIndex, endIndex);
 
     res.json({
@@ -592,7 +670,8 @@ exports.getSalesReport = async (req, res) => {
           topSelling: topProductsByQty,
           mostProfitable: topProductsByProfit,
           slowMoving: slowMovingProducts,
-          categoryDistribution
+          categoryDistribution,
+          outletPerformance
         },
         items: paginatedItems,
         pagination: {
@@ -613,7 +692,7 @@ exports.getSalesReport = async (req, res) => {
 exports.getInventoryReport = async (req, res) => {
   try {
     const { storeId, startDate, endDate } = req.query;
-    
+
     // Log report access
     LogService.logReportAccess(
       req.user?.id,
@@ -647,7 +726,7 @@ exports.getInventoryReport = async (req, res) => {
       if (storeId && storeId !== 'central') {
         whereClause.storeId = storeId;
       }
-      
+
       stockGudangToko = await StockGudangToko.findAll({
         where: whereClause,
         include: [
@@ -741,10 +820,10 @@ exports.getInventoryReport = async (req, res) => {
           lowStockItems: lowStockItems.length,
           outOfStockItems: outOfStockItems.length
         },
-        categoryStock: Object.entries(stockByCategory).map(([name, data]) => ({ 
-          name, 
+        categoryStock: Object.entries(stockByCategory).map(([name, data]) => ({
+          name,
           productCount: data.items,
-          totalValue: data.totalValue 
+          totalValue: data.totalValue
         })),
         storeInventory: Object.entries(storeInventory).map(([name, data]) => ({ name, ...data })),
         lowStockItems: lowStockItems.map((item, index) => {
@@ -893,7 +972,7 @@ exports.getPurchaseReport = async (req, res) => {
     const purchasesWithTotals = purchaseData.map(po => {
       const totalAmount = po.items.reduce((sum, item) => sum + parseFloat(item.subtotal || 0), 0);
       const totalItems = po.items.reduce((sum, item) => sum + item.qty, 0);
-      
+
       // Debug logging
       console.log('Purchase Order Debug:', {
         id: po.id,
@@ -906,7 +985,7 @@ exports.getPurchaseReport = async (req, res) => {
           subtotal: po.items[0].subtotal
         } : null
       });
-      
+
       return {
         ...po.toJSON(),
         total_amount: totalAmount,
@@ -926,17 +1005,17 @@ exports.getPurchaseReport = async (req, res) => {
           averageOrderValue: totalPurchases > 0 ? totalAmount / totalPurchases : 0
         },
         topSuppliers: Object.entries(supplierPurchases)
-          .map(([name, data]) => ({ 
-            name, 
-            orderCount: data.orders, 
-            totalAmount: data.totalAmount 
+          .map(([name, data]) => ({
+            name,
+            orderCount: data.orders,
+            totalAmount: data.totalAmount
           }))
           .sort((a, b) => b.totalAmount - a.totalAmount)
           .slice(0, 10),
-        categoryPurchases: Object.entries(categoryPurchases).map(([name, data]) => ({ 
-          name, 
-          quantity: data.quantity, 
-          totalAmount: data.totalAmount 
+        categoryPurchases: Object.entries(categoryPurchases).map(([name, data]) => ({
+          name,
+          quantity: data.quantity,
+          totalAmount: data.totalAmount
         })),
         supplierPerformance,
         topPurchasedProducts,
@@ -1065,7 +1144,7 @@ exports.getFinancialSummary = async (req, res) => {
           totalExpenses: totalExpenses,
           expenseDetails: additionalExpenses,
         },
-        ratios: { 
+        ratios: {
           profitMargin: profitMargin,
           grossMargin: netRevenue > 0 ? ((netRevenue - netCosts) / netRevenue) * 100 : 0,
           expenseRatio: netRevenue > 0 ? (totalExpenses / netRevenue) * 100 : 0,
@@ -1131,7 +1210,7 @@ exports.getProductPerformance = async (req, res) => {
         const productId = item.barangId;
         const productName = item.Barang?.nama || 'Unknown';
         const categoryName = item.Barang?.Kategori?.nama || 'Unknown';
-        
+
         if (!productPerformance[productId]) {
           productPerformance[productId] = {
             id: productId,
@@ -1143,7 +1222,7 @@ exports.getProductPerformance = async (req, res) => {
             averagePrice: 0
           };
         }
-        
+
         productPerformance[productId].totalSold += item.qty;
         productPerformance[productId].totalRevenue += parseFloat(item.subtotal || 0);
       });
@@ -1166,7 +1245,7 @@ exports.getProductPerformance = async (req, res) => {
     const totalProducts = Object.keys(productPerformance).length;
     const totalRevenue = Object.values(productPerformance).reduce((sum, p) => sum + p.totalRevenue, 0);
     const totalSold = Object.values(productPerformance).reduce((sum, p) => sum + p.totalSold, 0);
-    
+
     // Calculate performance scores and categorize products
     const productsWithScores = Object.values(productPerformance).map(product => {
       const performanceScore = totalRevenue > 0 ? (product.totalRevenue / totalRevenue) * 100 : 0;
@@ -1181,8 +1260,8 @@ exports.getProductPerformance = async (req, res) => {
 
     const topPerformers = productsWithScores.filter(p => p.performanceScore > 10).length;
     const lowPerformers = productsWithScores.filter(p => p.performanceScore < 5).length;
-    const averagePerformance = productsWithScores.length > 0 
-      ? productsWithScores.reduce((sum, p) => sum + p.performanceScore, 0) / productsWithScores.length 
+    const averagePerformance = productsWithScores.length > 0
+      ? productsWithScores.reduce((sum, p) => sum + p.performanceScore, 0) / productsWithScores.length
       : 0;
 
     // Group by category
@@ -1251,7 +1330,7 @@ exports.getProductPerformance = async (req, res) => {
 exports.getMovingStockReport = async (req, res) => {
   try {
     const { period = 'month', storeId, status, startDate, endDate } = req.query;
-    
+
     // Log report access
     LogService.logReportAccess(
       req.user?.id,
@@ -1259,7 +1338,7 @@ exports.getMovingStockReport = async (req, res) => {
       { period, storeId, status, startDate, endDate },
       req.ip || req.connection.remoteAddress
     );
-    
+
     // Use custom date range if provided, otherwise use period
     let start, end;
     if (startDate && endDate) {
@@ -1329,12 +1408,12 @@ exports.getMovingStockReport = async (req, res) => {
     // Calculate summary metrics
     const totalRequests = stockRequests.length;
     const totalTransfers = stockTransfers.length;
-    
+
     const pendingRequests = stockRequests.filter(req => req.status === 'pending').length;
     const approvedRequests = stockRequests.filter(req => req.status === 'approved').length;
     const fulfilledRequests = stockRequests.filter(req => req.status === 'fulfilled').length;
     const rejectedRequests = stockRequests.filter(req => req.status === 'rejected').length;
-    
+
     const pendingTransfers = stockTransfers.filter(trans => trans.status === 'pending').length;
     const completedTransfers = stockTransfers.filter(trans => trans.status === 'completed').length;
 
@@ -1464,7 +1543,7 @@ exports.getMovingStockReport = async (req, res) => {
     // Monthly trends
     const monthlyTrends = [];
     const months = {};
-    
+
     stockRequests.forEach(req => {
       const month = req.createdAt.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
       if (!months[month]) {
@@ -1489,7 +1568,7 @@ exports.getMovingStockReport = async (req, res) => {
 
     // Generate insights
     const insights = [];
-    
+
     if (pendingRequests > 0) {
       insights.push({
         type: "warning",
@@ -1497,7 +1576,7 @@ exports.getMovingStockReport = async (req, res) => {
         description: `${pendingRequests} stock requests are still pending approval`
       });
     }
-    
+
     if (pendingTransfers > 0) {
       insights.push({
         type: "warning",
@@ -1505,7 +1584,7 @@ exports.getMovingStockReport = async (req, res) => {
         description: `${pendingTransfers} stock transfers are pending completion`
       });
     }
-    
+
     if (totalRequestedQuantity > totalTransferredQuantity) {
       insights.push({
         type: "info",
@@ -1513,7 +1592,7 @@ exports.getMovingStockReport = async (req, res) => {
         description: `More items requested (${totalRequestedQuantity}) than transferred (${totalTransferredQuantity})`
       });
     }
-    
+
     if (Object.keys(storeMovements).length > 1) {
       const topStore = Object.values(storeMovements).sort((a, b) => b.requests - a.requests)[0];
       insights.push({
@@ -1589,7 +1668,7 @@ exports.exportSalesReport = async (req, res) => {
   try {
     const { period = 'month', storeId, categoryId, search } = req.query;
     let { startDate, endDate } = req.query;
-    
+
     let start, end;
     if (startDate && endDate) {
       start = new Date(startDate);
@@ -1610,6 +1689,13 @@ exports.exportSalesReport = async (req, res) => {
       whereClause.storeId = storeId;
     }
 
+    const allStoresList = await Store.findAll();
+    const storeMap = {};
+    allStoresList.forEach(s => {
+      storeMap[s.id] = s.nama;
+    });
+    const getStoreName = (sId) => sId ? (storeMap[sId] || `Outlet #${sId}`) : 'Central Warehouse';
+
     const salesData = await Sale.findAll({
       where: whereClause,
       include: [
@@ -1617,7 +1703,8 @@ exports.exportSalesReport = async (req, res) => {
           model: SaleItem,
           as: 'items',
           include: [{ model: Barang, include: [{ model: Kategori }] }]
-        }
+        },
+        { model: Store, as: 'store' }
       ]
     });
 
@@ -1641,6 +1728,7 @@ exports.exportSalesReport = async (req, res) => {
     const productMap = {};
 
     salesData.forEach(sale => {
+      const storeName = getStoreName(sale.storeId);
       sale.items.forEach(item => {
         if (!productMap[item.barangId]) {
           productMap[item.barangId] = {
@@ -1653,25 +1741,31 @@ exports.exportSalesReport = async (req, res) => {
             grossSales: 0,
             totalDiskon: 0,
             totalReturQty: 0,
-            totalReturAmount: 0
+            totalReturAmount: 0,
+            outletSalesMap: {}
           };
         }
-        
+
         const p = productMap[item.barangId];
         const qty = item.qty;
         const harga = parseFloat(item.harga || 0);
         const subtotal = qty * harga;
-        
+
         let itemDiscount = 0;
         if (sale.discount_mode === 'item') {
-            itemDiscount = subtotal * (parseFloat(item.discount_percent || 0) / 100);
+          itemDiscount = subtotal * (parseFloat(item.discount_percent || 0) / 100);
         } else if (sale.discount_mode === 'bill') {
-            itemDiscount = subtotal * (parseFloat(sale.bill_discount_percent || 0) / 100);
+          itemDiscount = subtotal * (parseFloat(sale.bill_discount_percent || 0) / 100);
         }
-        
+
         p.qtyTerjual += qty;
         p.grossSales += subtotal;
         p.totalDiskon += itemDiscount;
+
+        if (!p.outletSalesMap[storeName]) {
+          p.outletSalesMap[storeName] = { storeName, qty: 0 };
+        }
+        p.outletSalesMap[storeName].qty += qty;
       });
     });
 
@@ -1688,10 +1782,11 @@ exports.exportSalesReport = async (req, res) => {
             grossSales: 0,
             totalDiskon: 0,
             totalReturQty: 0,
-            totalReturAmount: 0
+            totalReturAmount: 0,
+            outletSalesMap: {}
           };
         }
-        
+
         const p = productMap[item.barangId];
         p.totalReturQty += item.qty;
         p.totalReturAmount += parseFloat(item.subtotal || 0);
@@ -1705,7 +1800,12 @@ exports.exportSalesReport = async (req, res) => {
       const profit = netSales - cogs;
       const margin = netSales > 0 ? (profit / netSales) * 100 : 0;
       const avgPrice = netQty > 0 ? (netSales / netQty) : 0;
-      
+      const outletsStr = Object.values(p.outletSalesMap || {})
+        .sort((a, b) => b.qty - a.qty)
+        .map(o => `${o.storeName}: ${o.qty} pcs`)
+        .join('; ') || '-';
+      delete p.outletSalesMap;
+
       return {
         ...p,
         netQty,
@@ -1713,22 +1813,23 @@ exports.exportSalesReport = async (req, res) => {
         cogs,
         profit,
         margin,
-        avgPrice
+        avgPrice,
+        outletsStr
       };
     });
 
     if (categoryId) {
       aggregatedItems = aggregatedItems.filter(item => item.kategoriId === parseInt(categoryId));
     }
-    
+
     if (search) {
       const s = search.toLowerCase();
-      aggregatedItems = aggregatedItems.filter(item => 
-        item.nama.toLowerCase().includes(s) || 
+      aggregatedItems = aggregatedItems.filter(item =>
+        item.nama.toLowerCase().includes(s) ||
         item.kode.toLowerCase().includes(s)
       );
     }
-    
+
     aggregatedItems.sort((a, b) => b.profit - a.profit);
 
     const csvData = aggregatedItems.map(item => ({
@@ -1736,6 +1837,7 @@ exports.exportSalesReport = async (req, res) => {
       'Nama Barang': item.nama,
       'Kategori': item.kategori,
       'Qty Terjual': item.netQty,
+      'Sebaran Outlet (Qty)': item.outletsStr,
       'Penjualan Kotor': formatCurrency(item.grossSales),
       'Diskon': formatCurrency(item.totalDiskon),
       'Retur': formatCurrency(item.totalReturAmount),
@@ -1751,6 +1853,7 @@ exports.exportSalesReport = async (req, res) => {
       { key: 'Nama Barang', label: 'Nama Barang' },
       { key: 'Kategori', label: 'Kategori' },
       { key: 'Qty Terjual', label: 'Qty Terjual' },
+      { key: 'Sebaran Outlet (Qty)', label: 'Sebaran Outlet (Qty)' },
       { key: 'Penjualan Kotor', label: 'Penjualan Kotor' },
       { key: 'Diskon', label: 'Diskon' },
       { key: 'Retur', label: 'Retur' },
@@ -1762,7 +1865,7 @@ exports.exportSalesReport = async (req, res) => {
     ];
 
     const csv = convertToCSV(csvData, headers);
-    
+
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename=item-sales-report-${period}-${new Date().toISOString().split('T')[0]}.csv`);
     res.send(csv);
@@ -1828,7 +1931,7 @@ exports.exportPurchaseReport = async (req, res) => {
     ];
 
     const csv = convertToCSV(csvData, headers);
-    
+
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename=purchase-report-${period}-${new Date().toISOString().split('T')[0]}.csv`);
     res.send(csv);
@@ -1867,7 +1970,7 @@ exports.exportInventoryReport = async (req, res) => {
       if (storeId && storeId !== 'central') {
         whereClause.storeId = storeId;
       }
-      
+
       stockGudangToko = await StockGudangToko.findAll({
         where: whereClause,
         include: [
@@ -1913,7 +2016,7 @@ exports.exportInventoryReport = async (req, res) => {
     ];
 
     const csv = convertToCSV(csvData, headers);
-    
+
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename=inventory-report-${storeId || 'all'}-${new Date().toISOString().split('T')[0]}.csv`);
     res.send(csv);
@@ -1984,7 +2087,7 @@ exports.exportFinancialReport = async (req, res) => {
     ];
 
     const csv = convertToCSV(csvData, headers);
-    
+
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename=financial-report-${period}-${new Date().toISOString().split('T')[0]}.csv`);
     res.send(csv);
@@ -2074,7 +2177,7 @@ exports.exportProductPerformance = async (req, res) => {
     ];
 
     const csv = convertToCSV(csvData, headers);
-    
+
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename=product-performance-${period}-${new Date().toISOString().split('T')[0]}.csv`);
     res.send(csv);
@@ -2095,8 +2198,8 @@ exports.exportMovingStockReport = async (req, res) => {
         createdAt: { [Op.between]: [start, end] }
       },
       include: [
-        { 
-          model: StockRequestItem, 
+        {
+          model: StockRequestItem,
           as: 'items',
           include: [
             {
@@ -2114,8 +2217,8 @@ exports.exportMovingStockReport = async (req, res) => {
         createdAt: { [Op.between]: [start, end] }
       },
       include: [
-        { 
-          model: StockTransferItem, 
+        {
+          model: StockTransferItem,
           as: 'items',
           include: [
             {
@@ -2182,7 +2285,7 @@ exports.exportMovingStockReport = async (req, res) => {
     ];
 
     const csv = convertToCSV(csvData, headers);
-    
+
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename=moving-stock-report-${period}-${new Date().toISOString().split('T')[0]}.csv`);
     res.send(csv);
